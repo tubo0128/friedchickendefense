@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>全家桶炸雞保衛戰</title>
+<style>
+:root{--bg:#4a3f3a;--fg:#fff3d6;--acc:#e4002b;color-scheme:dark}
+@media (prefers-color-scheme:light){:root{--bg:#4a3f3a}}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif;overflow:hidden;touch-action:manipulation;user-select:none}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+#wrap{height:100%;display:flex;align-items:center;justify-content:center}
+canvas{height:100%;max-width:100%;aspect-ratio:2/3;background:#fff3d6;display:block}
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chiron+GoRound+TC:wght@500;700&display=swap">
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="400" height="600"></canvas></div>
+<script>
+(()=>{
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=400,H=600,FLOOR=H-40,GRAV=1500;
+
+// ---------- 怪手資料庫 ----------
+const HANDS=[
+ {id:'barbie',name:'塗了芭比粉指甲油的貴婦手',skin:'#f6d3c0',nail:'#ff4fa3',deco:'ring'},
+ {id:'thanos',name:'滅霸的無限手套',skin:'#d9a21b',nail:'#7b2cff',deco:'gems'},
+ {id:'bear',name:'熊掌',skin:'#6b4423',nail:'#222',deco:'fur'},
+ {id:'chicken',name:'另一隻炸雞的手',skin:'#e0a040',nail:'#a8661a',deco:'crumb'},
+ {id:'office',name:'加班到崩潰的上班族手',skin:'#e8b894',nail:'#cfa',deco:'watch'},
+ {id:'alien',name:'外星人的綠色觸手',skin:'#6fd36f',nail:'#1d6b1d',deco:'sucker'}
+];
+
+// ---------- AI 遺言模組（模板 + 隨機組合） ----------
+const LastWords={
+ timeTier(s){return s<5?0:s<20?1:s<45?2:3},
+ openers:[
+  ["你只撐了 {t} 秒，連全家桶的蓋子都還沒熟悉。","{t} 秒，比泡麵等待時間還短。","在 {t} 秒的人生裡，你只學會了一件事：酥脆易碎。"],
+  ["你堅持了 {t} 秒，足夠讓咖啡涼掉。","{t} 秒的掙扎，是炸雞界的小小奇蹟。","你扭動了 {t} 秒，油花都為你停了下來。"],
+  ["你堅持了 {t} 秒，這是一段足以寫進炸雞族史詩的時間。","{t} 秒！連隔壁的薯條都開始崇拜你。","{t} 秒的閃躲，讓你的麵衣更加金黃。"],
+  ["你活了 {t} 秒，已經不是炸雞，是傳說。","{t} 秒，全家桶的歷史將記住你的名字（或是油漬）。","{t} 秒的奇蹟，連肯德基爺爺都鞠躬。"]
+ ],
+ byHand:{
+  barbie:["最後被貴婦的粉紅指甲輕輕一夾，成為了下午茶的主角。","她優雅地說：「這塊，配香檳。」","你的靈魂與芭比粉一起融化在名媛的社群貼文裡。"],
+  thanos:["彈指一下，你連麵衣都化成了灰。","宇宙需要平衡，而你剛好是多出來的那塊炸雞。","你不是被吃掉，你是被「平衡」掉。"],
+  bear:["熊掌一拍，你成為森林裡最昂貴的零食。","冬眠前的最後一餐，就是你。","你終於明白，食物鏈頂端從來沒有炸雞的位子。"],
+  chicken:["被另一隻炸雞抓走，這是自相殘殺還是命中注定的重逢？","你死於同類之手，這在炸雞族歷史上稱為「油炸內戰」。","它含淚說：「兄弟，我也是被逼的。」"],
+  office:["你成為了加班夜裡唯一的救贖，享年 3 分鐘。","他邊吃邊說：「下午茶就是人生的 KPI。」","你被扔進會議室，成為週報裡的一行『團隊士氣提升』。"],
+  alien:["你被帶往銀河系，成為外星人眼中的「地球限定美味」。","外星人研究了你的麵衣，結論：『高熱量，值得入侵。』","你的最後一幕，是 UFO 艙內的一盞白光。"]
+ },
+ closers:["願你在薯條與可樂的彼岸安息。","酥脆是你的榮耀，油脂是你的歸宿。","下輩子，記得投胎成沙拉。","人生如炸雞，外酥內嫩，終究逃不過被吃掉。","遺言完畢，請把骨頭回收。"],
+ pick(a){return a[Math.floor(Math.random()*a.length)]},
+ generate(hand,sec){
+  const t=sec.toFixed(1);
+  const op=this.pick(this.openers[this.timeTier(sec)]).replace('{t}',t);
+  const mid=this.pick(this.byHand[hand.id]);
+  return op+mid+this.pick(this.closers);
+ }
+};
+
+// ---------- 遊戲狀態 ----------
+let state='title',grab=null,invuln=0,chicken,hands,t0,survive,spawnT,best=+(localStorage.getItem?.('dfd_best')||0),lastWord='',killer=null,shake=0,crumbs=[];
+try{best=+localStorage.getItem('dfd_best')||0}catch(e){}
+
+function reset(){
+ chicken={x:W/2,y:FLOOR-22,vx:0,vy:0,r:22,rot:0,vr:0,onGround:true};
+ hands=[];crumbs=[];survive=0;spawnT=0.8;shake=0;grab=null;invuln=0;
+}
+reset();
+
+function spawnHand(){
+ const def=HANDS[Math.floor(Math.random()*HANDS.length)];
+ const lvl=Math.min(1+survive/12,6);
+ const x=40+Math.random()*(W-80);
+ const aim=Math.random()<0.55; // 部分手會瞄準炸雞
+ const tx=aim?chicken.x+(Math.random()-.5)*30:x;
+ hands.push({def,x,tx,reach:0,maxReach:FLOOR-60-Math.random()*60,
+  speed:(70+Math.random()*50)*lvl,phase:0,wob:Math.random()*6,
+  warn:Math.max(0.5-survive*0.008,0.18),state:'warn',ang:(Math.random()-.5)*0.6*(0.5+lvl*0.3),
+  w:34+Math.random()*16,wait:0.4+Math.random()*0.5,retract:false,rev:Math.random()<0.5});
+}
+
+function jump(){
+ if(state==='title'||state==='dead'){
+  if(state==='dead'&&performance.now()-deadAt<500)return;
+  reset();state='play';t0=performance.now();return;
+ }
+ if(state==='grab'){struggle();return}
+ const dir=(Math.random()<0.5?-1:1);
+ const power=300+Math.random()*180;
+ chicken.vx=dir*(120+Math.random()*180);
+ chicken.vy=-power;
+ chicken.vr=dir*(6+Math.random()*10);
+ chicken.onGround=false;
+ beep(300+Math.random()*300);
+}
+let deadAt=0;
+
+// ---------- 音效（WebAudio，無外部資源） ----------
+let ac;
+function beep(f,d=0.08,type='square',v=0.05){
+ try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+  const o=ac.createOscillator(),g=ac.createGain();o.type=type;o.frequency.value=f;
+  g.gain.value=v;g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+d);
+  o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d);}catch(e){}
+}
+
+// ---------- 更新 ----------
+function update(dt){
+ if(state==='grab'){updateGrab(dt);return}
+ if(state!=='play')return;
+ survive=(performance.now()-t0)/1000;
+ if(invuln>0)invuln-=dt;
+ // 炸雞物理
+ const c=chicken;
+ c.vy+=GRAV*dt;c.x+=c.vx*dt;c.y+=c.vy*dt;c.rot+=c.vr*dt;
+ const L=60,R=W-60; // 桶壁（梯形內側）
+ if(c.x<L+c.r){c.x=L+c.r;c.vx*=-0.6;c.vr*=-0.6}
+ if(c.x>R-c.r){c.x=R-c.r;c.vx*=-0.6;c.vr*=-0.6}
+ if(c.y>FLOOR-c.r){c.y=FLOOR-c.r;c.vy*=-0.25;c.vx*=0.7;c.vr*=0.6;
+  if(Math.abs(c.vy)<40){c.vy=0;c.onGround=true}}
+ if(c.y<c.r+20){c.y=c.r+20;c.vy=Math.abs(c.vy)*0.3}
+ // 生手
+ spawnT-=dt;
+ if(spawnT<=0){spawnHand();spawnT=Math.max(1.3-survive*0.018,0.28)*(0.6+Math.random()*0.8)}
+ // 手更新
+ for(const h of hands){
+  if(h.state==='warn'){h.warn-=dt;if(h.warn<=0)h.state='reach'}
+  else if(h.state==='reach'){
+   h.reach+=h.speed*dt;
+   // 追蹤：緩慢朝炸雞偏移
+   const track=0.25+Math.min(survive/60,0.6);
+   h.x+=(h.tx-h.x)*Math.min(dt*track*1.5,1);
+   if(h.reach>=h.maxReach){h.reach=h.maxReach;h.state='wait'}
+  }else if(h.state==='wait'){h.wait-=dt;if(h.wait<=0)h.state='back'}
+  else if(h.state==='back'){h.reach-=h.speed*1.4*dt;if(h.reach<=-20)h.dead=true}
+  h.phase+=dt*8;
+  // 碰撞：手掌圓形 vs 炸雞圓形
+  if(h.state!=='warn'){
+   const p=handTip(h);
+   const dx=p.x-c.x,dy=p.y-c.y,rr=h.w*0.75+c.r*0.82;
+   if(invuln<=0&&!h.dead&&!h.nograb&&dx*dx+dy*dy<rr*rr){startGrab(h);return}
+  }
+ }
+ hands=hands.filter(h=>!h.dead);
+ // 碎屑
+ for(const p of crumbs){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=600*dt;p.life-=dt}
+ crumbs=crumbs.filter(p=>p.life>0);
+ if(shake>0)shake-=dt*30;
+}
+
+function handTip(h){
+ const a=h.ang;
+ return{x:h.x+Math.sin(a)*h.reach,y:20+Math.cos(a)*h.reach};
+}
+
+// ---------- 被抓住：讀條掙扎 ----------
+function startGrab(h){
+ const lvl=Math.min(1+Math.floor(survive/12),6);
+ const T=Math.max(1.7-lvl*0.1,1.1);
+ grab={h,T,time:T,prog:0,gain:Math.max(0.19-lvl*0.012,0.12),shake:0};
+ state='grab';h.state='grabbed';shake=6;
+ beep(180,0.15,'sawtooth',0.08);
+}
+function struggle(){
+ grab.prog=Math.min(grab.prog+grab.gain,1);grab.shake=6;
+ beep(500+grab.prog*500,0.05,'square',0.05);
+ if(grab.prog>=1)escape();
+}
+function escape(){
+ const h=grab.h,dir=chicken.x<W/2?1:-1;
+ h.state='back';h.nograb=true;
+ chicken.vx=dir*(260+Math.random()*100);chicken.vy=-120;chicken.vr=dir*14;chicken.onGround=false;
+ invuln=0.9;state='play';grab=null;shake=8;
+ for(let i=0;i<14;i++)crumbs.push({x:chicken.x,y:chicken.y,vx:(Math.random()-.5)*300,vy:-Math.random()*200,life:.6+Math.random()*.5,s:2+Math.random()*3});
+ beep(900,0.2,'triangle',0.08);
+}
+function updateGrab(dt){
+ const g=grab,h=g.h;
+ t0+=dt*1000; // 讀條期間不計入存活秒數
+ g.time-=dt;g.prog=Math.max(g.prog-0.3*dt,0);g.shake=Math.max(g.shake-dt*30,0);
+ h.phase+=dt*25;
+ h.reach=Math.max(h.reach-45*dt,40);
+ const p=handTip(h);
+ chicken.x=p.x+Math.sin(h.ang)*h.w*.55+(Math.random()-.5)*(3+g.shake);chicken.y=p.y+Math.cos(h.ang)*h.w*.55+(Math.random()-.5)*(3+g.shake);
+ chicken.vx=chicken.vy=0;chicken.rot=(Math.random()-.5)*0.5;
+ if(shake>0)shake-=dt*30;
+ if(g.time<=0){grab=null;die(h)}
+}
+
+function die(h){
+ state='dead';killer=h.def;deadAt=performance.now();
+ lastWord=LastWords.generate(h.def,survive);
+ if(survive>best){best=survive;try{localStorage.setItem('dfd_best',best)}catch(e){}}
+ shake=10;
+ for(let i=0;i<30;i++)crumbs.push({x:chicken.x,y:chicken.y,vx:(Math.random()-.5)*400,vy:-Math.random()*300,life:1+Math.random(),s:2+Math.random()*4});
+ beep(120,0.4,'sawtooth',0.1);
+}
+
+// ---------- 繪製 ----------
+function wrapText(text,x,y,maxW,lh){
+ let line='',yy=y;
+ for(const ch of text){
+  const test=line+ch;
+  if(ctx.measureText(test).width>maxW){ctx.fillText(line,x,yy);line=ch;yy+=lh}else line=test;
+ }
+ ctx.fillText(line,x,yy);return yy;
+}
+
+// ======== 卡通莫蘭迪色系 ========
+const M={cream:'#efe6da',rose:'#c9a09f',sage:'#a5b09a',sand:'#d6c3a9',ochre:'#d9a66f',terra:'#bf8f7e',taupe:'#5a463f'},OUT='#5a463f',FNT=`'Chiron GoRound TC','PingFang TC','Noto Sans TC','Microsoft JhengHei',sans-serif`;
+try{['500','700'].forEach(w=>document.fonts.load(w+' 20px '+FNT,'全家桶炸雞保衛戰被吃掉了存活秒最佳凶手遺言狂點掙扎新紀錄點一下開始再來一塊你是桶裡最後隨機翻滾跳躍看到就閃被抓住要快點'))}catch(e){}
+let tC=0;
+function T4(s,x,y,size,fill,align,plain){ctx.save();ctx.font='700 '+size+'px '+FNT;ctx.textAlign=align||'center';ctx.lineJoin='round';if(!plain){ctx.lineWidth=size*.24;ctx.strokeStyle=OUT;ctx.strokeText(s,x,y)}ctx.fillStyle=fill;ctx.fillText(s,x,y);ctx.restore()}
+function P4(x,y,w,h){ctx.fillStyle='rgba(90,70,60,.35)';rr(x+3,y+5,w,h,14);ctx.fill();ctx.fillStyle=M.cream;ctx.strokeStyle=OUT;ctx.lineWidth=3.5;rr(x,y,w,h,14);ctx.fill();ctx.stroke()}
+
+function drawBucketC(){
+ tC+=.016;const lw=60;let g;
+ g=ctx.createRadialGradient(W/2,H*.45,20,W/2,H*.45,H*.8);g.addColorStop(0,'#eadcc8');g.addColorStop(1,'#cdb8a0');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+ ctx.save();ctx.beginPath();ctx.rect(lw,0,W-2*lw,H);ctx.clip();ctx.translate(W/2,H*.45);ctx.rotate(tC*.05);ctx.fillStyle='rgba(255,250,240,.2)';
+ for(let i=0;i<12;i++){ctx.rotate(Math.PI/6);ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(700,-55);ctx.lineTo(700,55);ctx.fill()}
+ ctx.restore();
+ ctx.fillStyle='rgba(120,95,80,.07)';
+ for(let y=10;y<H;y+=16)for(let x=lw+((y/16)%2)*8;x<W-lw;x+=16){ctx.beginPath();ctx.arc(x,y,2,0,7);ctx.fill()}
+ ctx.strokeStyle='rgba(255,255,255,.55)';ctx.lineWidth=1.6;
+ for(let i=0;i<8;i++){const sp=1+i%3,x=lw+15+((i*47+Math.sin(tC*1.5+i)*12+W)%(W-2*lw-30)),y=H-((tC*26*sp+i*83)%(H+20)),r=3+i%4;ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.stroke()}
+ g=ctx.createLinearGradient(0,0,0,100);g.addColorStop(0,'rgba(90,70,60,.3)');g.addColorStop(1,'rgba(90,70,60,0)');ctx.fillStyle=g;ctx.fillRect(lw,0,W-2*lw,100);
+ for(const s of [0,1]){
+  const x0=s?W-lw:0;
+  ctx.save();ctx.beginPath();ctx.rect(x0,0,lw,H);ctx.clip();
+  for(let i=0;i<4;i++){ctx.fillStyle=i%2?M.cream:M.rose;ctx.fillRect(x0+i*15,0,15,H)}
+  g=ctx.createLinearGradient(s?W:0,0,s?W-lw:lw,0);g.addColorStop(0,'rgba(90,70,60,0)');g.addColorStop(1,'rgba(90,70,60,.3)');ctx.fillStyle=g;ctx.fillRect(x0,0,lw,H);
+  ctx.restore();
+  ctx.strokeStyle=OUT;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(s?W-lw:lw,0);ctx.lineTo(s?W-lw:lw,H);ctx.stroke();
+ }
+ ctx.beginPath();ctx.moveTo(lw,H);
+ for(let x=lw;x<=W-lw;x+=6)ctx.lineTo(x,FLOOR+Math.sin(x*.17)*3+Math.sin(x*.41)*2);
+ ctx.lineTo(W-lw,H);ctx.closePath();
+ g=ctx.createLinearGradient(0,FLOOR,0,H);g.addColorStop(0,'#d8b98d');g.addColorStop(1,'#b8956a');ctx.fillStyle=g;ctx.fill();ctx.strokeStyle=OUT;ctx.lineWidth=3;ctx.stroke();
+ for(let i=0;i<14;i++){ctx.fillStyle=i%2?'rgba(150,115,80,.5)':'rgba(240,222,190,.7)';ctx.beginPath();ctx.arc(lw+14+(i*37%(W-2*lw-28)),FLOOR+10+(i*13%24),2+i%3,0,7);ctx.fill()}
+ ctx.fillStyle=M.cream;ctx.strokeStyle=OUT;ctx.lineWidth=4;rr(-8,-14,W+16,30,14);ctx.fill();ctx.stroke();
+ ctx.fillStyle=M.rose;for(let x=8;x<W;x+=30){rr(x,-3,14,12,5);ctx.fill()}
+}
+
+function drawChickenD(){
+ const c=chicken,r=c.r;
+ const hg=Math.max(0,FLOOR-c.y-r),sc=Math.max(.4,1-hg/320);
+ ctx.fillStyle='rgba(90,70,60,.25)';ctx.beginPath();ctx.ellipse(c.x,FLOOR-1,r*1.2*sc,5*sc,0,0,7);ctx.fill();
+ ctx.save();ctx.translate(c.x,c.y);ctx.rotate(c.rot);
+ if(invuln>0&&Math.floor(invuln*20)%2)ctx.globalAlpha=.5;
+ const st=Math.min(Math.abs(c.vy)/2200,.12);ctx.scale(1-st,1+st);
+ ctx.lineJoin='round';ctx.lineWidth=3;ctx.strokeStyle=OUT;
+ ctx.fillStyle=M.cream;rr(r*.7,-4.5,r*.8,9,3);ctx.fill();ctx.stroke();
+ for(const sy of [-5.5,5.5]){ctx.beginPath();ctx.arc(r*1.5,sy,5,0,7);ctx.fill();ctx.stroke()}
+ const body=()=>{ctx.beginPath();for(let i=0;i<=48;i++){const a=i/48*Math.PI*2,k=1+.05*Math.abs(Math.sin(a*5)),cs=Math.cos(a),x=cs*r*1.1*k-r*.1,y=Math.sin(a)*r*k*(1-.4*Math.max(0,cs));i?ctx.lineTo(x,y):ctx.moveTo(x,y)}ctx.closePath()};
+ body();
+ const g=ctx.createRadialGradient(-r*.5,-r*.45,2,0,0,r*1.4);g.addColorStop(0,'#f0d4a8');g.addColorStop(.65,'#d9a66f');g.addColorStop(1,'#c18a58');
+ ctx.fillStyle=g;ctx.fill();ctx.stroke();
+ ctx.save();body();ctx.clip();
+ const sg=ctx.createLinearGradient(0,-r,0,r);sg.addColorStop(.5,'rgba(120,80,50,0)');sg.addColorStop(1,'rgba(120,80,50,.22)');ctx.fillStyle=sg;ctx.fillRect(-2*r,-2*r,4*r,4*r);
+ for(let i=0;i<16;i++){const a=i*2.4,d=Math.sqrt((i+.5)/16)*.78,x=Math.cos(a)*d*r*1.05-r*.1,y=Math.sin(a)*d*r*.8;ctx.fillStyle=i%2?'rgba(176,122,76,.5)':'rgba(248,232,205,.65)';ctx.beginPath();ctx.arc(x,y,1.5+(i%3)*.7,0,7);ctx.fill()}
+ ctx.strokeStyle='rgba(176,122,76,.65)';ctx.lineWidth=1.8;ctx.lineCap='round';
+ [[-.7,.1,-.35,.4],[-.2,-.55,.2,-.25],[.15,.35,.5,.2]].forEach(p=>{ctx.beginPath();ctx.moveTo(p[0]*r,p[1]*r);ctx.quadraticCurveTo((p[0]+p[2])/2*r,(p[1]+p[3])/2*r-3,p[2]*r,p[3]*r);ctx.stroke()});
+ ctx.restore();
+ ctx.fillStyle='rgba(255,250,240,.55)';ctx.beginPath();ctx.ellipse(-r*.55,-r*.5,r*.24,r*.11,-.7,0,7);ctx.fill();
+ ctx.restore();
+}
+
+function drawHandD(h){
+ const d=h.def,S=HS2[d.id],a=h.ang,hw=h.w;
+ if(h.state==='warn'){
+  const x=Math.max(34,Math.min(W-34,h.x)),s=1+.12*Math.sin(h.phase*3);
+  ctx.save();ctx.translate(x,54);ctx.scale(s,s);
+  ctx.fillStyle=M.terra;ctx.strokeStyle=OUT;ctx.lineWidth=3.5;ctx.lineJoin='round';
+  ctx.beginPath();ctx.moveTo(0,-21);ctx.lineTo(21,15);ctx.lineTo(-21,15);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle=M.cream;ctx.font='700 21px '+FNT;ctx.textAlign='center';ctx.fillText('!',0,11);
+  ctx.restore();return;
+ }
+ ctx.save();ctx.translate(h.x,20);ctx.rotate(-a);if(h.rev)ctx.scale(-1,1);ctx.lineJoin='round';
+ const y0=h.reach,fw=hw*.2*S.fw,half=fw*2.25,pl=hw*.5,ah=hw*.2,open=.5+.5*Math.sin(h.phase)*(h.state==='reach'?1:.4);
+ const arm=()=>{ctx.beginPath();ctx.moveTo(-ah*1.15,-34);ctx.lineTo(ah*1.15,-34);ctx.lineTo(ah*.9,y0+4);ctx.lineTo(-ah*.9,y0+4);ctx.closePath()};
+ const palm=()=>rr(-half,y0-2,half*2,pl+2,half*.8);
+ ctx.strokeStyle=OUT;ctx.lineWidth=6.5;arm();ctx.stroke();palm();ctx.stroke();
+ const lens=[.8,1,.92,.7],fan=.04+.08*open;
+ fing(S,half*.92,y0+pl*.42,-.95,hw*.34*S.fl+4,fw*1.1,hw);
+ for(let i=0;i<4;i++)fing(S,(i-1.5)*fw*1.06,y0+pl-5,-(i-1.5)*fan,hw*.5*S.fl*lens[i]+5,fw,hw);
+ ctx.fillStyle=S.sk;arm();ctx.fill();palm();ctx.fill();
+ ctx.fillStyle='rgba(255,255,255,.22)';ctx.beginPath();ctx.ellipse(-half*.4,y0+pl*.3,half*.22,pl*.14,-.4,0,7);ctx.fill();
+ ctx.fillStyle='rgba(90,60,50,.3)';for(let i=0;i<4;i++){ctx.beginPath();ctx.arc((i-1.5)*fw*1.06,y0+pl-9,1.4,0,7);ctx.fill()}
+ ctx.strokeStyle=OUT;ctx.lineWidth=2.2;
+ if(S.slv){const ce=Math.max(y0*.45,10);ctx.fillStyle=S.slv;rr(-ah*1.55,-38,ah*3.1,ce+38,6);ctx.fill();ctx.stroke();ctx.fillStyle='rgba(255,255,255,.3)';rr(-ah*1.7,ce-8,ah*3.4,11,4);ctx.fill();ctx.stroke()}
+ if(d.id==='bear'){ctx.lineWidth=1.8;for(let y=-20;y<y0;y+=8){ctx.beginPath();ctx.moveTo(-ah*1.05,y);ctx.lineTo(-ah*1.05-4,y+5);ctx.moveTo(ah*1.05,y);ctx.lineTo(ah*1.05+4,y+5);ctx.stroke()}
+  ctx.fillStyle='#6d5448';ctx.beginPath();ctx.ellipse(0,y0+pl*.55,half*.55,pl*.28,0,0,7);ctx.fill();ctx.stroke()}
+ if(d.id==='barbie'){ctx.fillStyle=M.cream;ctx.lineWidth=1.5;for(let i=-2;i<=2;i++){ctx.beginPath();ctx.arc(i*ah*.42,y0-6,2.8,0,7);ctx.fill();ctx.stroke()}}
+ if(d.id==='thanos'){['#a5b09a','#8fa3b5','#c9a09f','#d6c3a9','#a99aa8'].forEach((c,i)=>{const x=(i-2)*half*.38,y=y0+pl*.5+Math.abs(i-2)*2;ctx.fillStyle=c;ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(x,y,3.4,0,7);ctx.fill();ctx.stroke()})}
+ if(d.id==='office'){ctx.fillStyle=M.taupe;rr(-ah*1.05,y0-13,ah*2.1,8,2);ctx.fill();ctx.fillStyle=M.cream;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(0,y0-9,4.2,0,7);ctx.fill();ctx.stroke()}
+ if(d.id==='chicken'){for(let i=0;i<9;i++){ctx.fillStyle=i%2?'rgba(176,122,76,.7)':'rgba(240,222,190,.8)';ctx.beginPath();ctx.arc((i%5-2)*half*.38,y0+pl*.2+(i*7%5)*pl*.15,1.7+i%2,0,7);ctx.fill()}}
+ if(d.id==='alien'){ctx.fillStyle='rgba(220,232,215,.7)';ctx.lineWidth=1.4;for(let i=0;i<3;i++){ctx.beginPath();ctx.arc((i-1)*half*.45,y0+pl*.5,3,0,7);ctx.fill();ctx.stroke()}}
+ ctx.restore();
+}
+
+const HS2={
+ barbie:{sk:'#efd5c4',nail:'#c98b9b',nl:1.5,fl:1.1,fw:.85,slv:'#b79aa6'},
+ thanos:{sk:'#cdb47a',nail:'#a08a52',nl:.9,fl:1,fw:1.1,slv:'#7a6c60'},
+ bear:{sk:'#8c7060',nail:'#efe6da',nl:0,fl:.6,fw:1.25,slv:null},
+ chicken:{sk:'#d9a66f',nail:'#c28d58',nl:.8,fl:.9,fw:1.1,slv:null},
+ office:{sk:'#e6c9b4',nail:'#f0ddd0',nl:.7,fl:1,fw:1,slv:'#d7d9d6'},
+ alien:{sk:'#a3b3a0',nail:'#7f917c',nl:.8,fl:1.3,fw:.7,slv:'#7d8c9a'}
+};
+function fing(S,x,y,ang,L,w,hw){
+ ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+ ctx.lineWidth=4.5;ctx.strokeStyle=OUT;ctx.fillStyle=S.sk;
+ rr(-w/2,-4,w,L+4,w/2);ctx.stroke();ctx.fill();
+ ctx.lineWidth=1.3;ctx.fillStyle=S.nail;
+ if(S.nl>0){const nh=hw*.15*S.nl,wt=w*.62;rr(-wt/2,L-nh-2,wt,nh,wt*.4);ctx.fill();ctx.stroke()}
+ else{ctx.beginPath();ctx.moveTo(-w*.3,L-4);ctx.lineTo(0,L+8);ctx.lineTo(w*.3,L-4);ctx.closePath();ctx.fill();ctx.stroke()}
+ ctx.restore();
+}
+function drawUIC(){
+ const pulse=1+.04*Math.sin(performance.now()/200);
+ if(state==='play'||state==='grab'){
+  P4(W/2-58,16,116,42);T4(survive.toFixed(1)+' s',W/2,46,24,M.taupe,'center',true);
+  T4('Lv.'+Math.min(1+Math.floor(survive/12),6),W-44,40,16,M.cream);T4('最佳 '+best.toFixed(1),50,40,13,M.cream);
+ }
+ if(state==='grab'&&grab){
+  const g=grab,vg=ctx.createRadialGradient(W/2,H/2,H*.28,W/2,H/2,H*.75);
+  vg.addColorStop(0,'rgba(191,143,126,0)');vg.addColorStop(1,'rgba(191,143,126,'+(.45+.12*Math.sin(performance.now()/80))+')');
+  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.translate(W/2,H/2-50);ctx.scale(pulse*1.1,pulse*1.1);T4('快點！狂點掙扎',0,0,28,M.cream);ctx.restore();
+  const bw=240,bx=(W-bw)/2,by=H/2-26;
+  ctx.fillStyle=M.cream;ctx.strokeStyle=OUT;ctx.lineWidth=3;rr(bx,by,bw,18,9);ctx.fill();ctx.stroke();
+  if(g.prog>.01){ctx.fillStyle=M.sage;rr(bx+2,by+2,Math.max((bw-4)*g.prog,14),14,7);ctx.fill()}
+  ctx.fillStyle=M.cream;rr(bx,by+26,bw,10,5);ctx.fill();ctx.stroke();
+  ctx.fillStyle=M.terra;rr(bx+2,by+28,Math.max((bw-4)*Math.max(g.time/g.T,0),6),6,3);ctx.fill();
+ }
+ if(state==='title'){
+  ctx.fillStyle='rgba(90,72,64,.72)';ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.translate(W/2,185);ctx.rotate(-.04);ctx.scale(pulse,pulse);T4('全家桶炸雞保衛戰',0,0,36,M.cream);ctx.restore();
+  T4('DEEP-FRIED DEFENSE',W/2,222,13,M.sand,'center',true);
+  P4(40,254,W-80,108);
+  T4('你是桶裡最後一塊炸雞！',W/2,288,15,M.taupe,'center',true);T4('點擊 / 空白鍵：隨機翻滾跳躍',W/2,317,15,M.taupe,'center',true);T4('看到 ! 就閃，被抓住要狂點掙扎',W/2,346,15,M.taupe,'center',true);
+  ctx.save();ctx.translate(W/2,425);ctx.scale(pulse,pulse);T4('點一下開始',0,0,26,M.sand);ctx.restore();
+  if(best>0)T4('最佳紀錄 '+best.toFixed(1)+' 秒',W/2,462,13,M.cream);
+ }
+ if(state==='dead'){
+  ctx.fillStyle='rgba(90,72,64,.8)';ctx.fillRect(0,0,W,H);
+  T4('被吃掉了！',W/2,92,38,'#e0a99f');
+  T4('存活 '+survive.toFixed(1)+' 秒',W/2,128,19,M.cream);
+  T4('最佳 '+best.toFixed(1)+' 秒'+(survive>=best-.001?'・新紀錄！':''),W/2,153,14,M.sand);
+  T4('凶手：'+killer.name,W/2,182,14,M.cream);
+  P4(25,203,W-50,207);
+  T4('《炸雞遺言》',W/2,236,19,'#a8695a','center',true);
+  ctx.save();ctx.font='500 15px '+FNT;ctx.fillStyle=M.taupe;ctx.textAlign='left';wrapText(lastWord,42,266,W-84,24);ctx.restore();
+  if(performance.now()-deadAt>500){ctx.save();ctx.translate(W/2,470);ctx.scale(pulse,pulse);T4('點一下，再來一塊炸雞',0,0,20,M.sand);ctx.restore()}
+ }
+}
+
+function rr(x,y,w,h,r){r=Math.min(r,w/2,h/2);ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath()}
+function draw(){
+ ctx.save();
+ if(shake>0)ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);
+ drawBucketC();
+ for(const h of hands)drawHandD(h);
+ drawChickenD();
+ for(const p of crumbs){ctx.fillStyle='#e0c49a';ctx.strokeStyle=OUT;ctx.lineWidth=1.2;ctx.beginPath();ctx.arc(p.x,p.y,p.s*.75,0,7);ctx.fill();ctx.stroke()}
+ ctx.restore();
+ drawUIC();
+}
+
+// ---------- 主迴圈 ----------
+let last=performance.now();
+function loop(now){
+ const dt=Math.min((now-last)/1000,0.033);last=now;
+ update(dt);draw();requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ---------- 輸入 ----------
+window.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();if(!e.repeat)jump()}});
+cv.addEventListener('pointerdown',e=>{e.preventDefault();jump()});
+})();
+</script>
+</body>
+</html>
